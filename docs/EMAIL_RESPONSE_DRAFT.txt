@@ -1,0 +1,45 @@
+Hi Brian and Kalpesh,
+
+Thank you for the Technical Directive and the clarifications on the rig constraints.
+
+I have reviewed Kalpesh's specifications and implemented the following updates:
+
+
+COORDINATE SYSTEM
+
+I have applied the X-axis flip correction throughout the pipeline. Both the video frames and keypoint coordinates are now transformed to match Unity's coordinate system (Z-forward, Y-up, X-flipped).
+
+Implementation location: src/unity_config.py and tracker_app.py
+
+
+PRIMARY ANCHOR (Right Hand)
+
+I am using the parameterized grip offsets as Kalpesh suggested. The current values (0.1, 0, 0.03) are configurable through the GripConfig class. This allows us to:
+- Adjust for different racket model origins
+- Support various grip styles (Continental, Eastern, etc.)
+- Fine-tune during Unity integration testing
+
+The racket is now locked to the right wrist as the primary anchor.
+
+
+SECONDARY ANCHOR (Left Hand)
+
+I agree with Kalpesh's assessment. I am NOT mapping the left hand as a constraint on the racket pose. The noise would create contradictions with the primary anchor. In my implementation:
+- Left hand is tracked for visualization purposes only
+- Racket dynamics are derived solely from right hand kinematics
+- This eliminates jitter from conflicting hand positions
+
+
+NEXT STEPS
+
+1. I will continue validating the 6-DoF output on the two-handed backhand clips
+2. Once Kalpesh confirms the racket model's origin point, I can fine-tune the wrist-to-face-center distance
+3. The output is ready for ZeroMQ integration - quaternion orientation + Unity-space position
+
+I should have the Monday deliverable ready - racket seated in the right hand throughout the backhand motion.
+
+Please let me know if you need any adjustments to these parameters.
+
+Best regards,
+Prashun
+

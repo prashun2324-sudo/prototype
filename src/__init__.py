@@ -66,6 +66,20 @@ from .universal_6dof import (
     dict_to_pose
 )
 
+from .unity_config import (
+    GripConfig,
+    CoordinateConfig,
+    GRIP_STYLES,
+    apply_coordinate_transform,
+    apply_coordinate_transform_2d
+)
+
+from .motion_occlusion_solver import (
+    OcclusionSolver,
+    Result,
+    State
+)
+
 __version__ = "1.0.0"
 __all__ = [
     # Core trackers
@@ -102,6 +116,13 @@ __all__ = [
     "CoordinateTransformer",
     "RollingShutterCompensator",
     "GripSlipDetector",
-    "HybridFusion"
+    "HybridFusion",
+    
+    # Unity Config
+    "GripConfig",
+    "CoordinateConfig",
+    "GRIP_STYLES",
+    "apply_coordinate_transform",
+    "apply_coordinate_transform_2d"
 ]
 

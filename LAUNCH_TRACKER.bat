@@ -1,6 +1,5 @@
 @echo off
-title Tennis Racket 6DoF Tracker
+title 6DoF Racket Tracker
 cd /d "%~dp0"
 python tracker_app.py
 pause
-

@@ -1,0 +1,12 @@
+# Racket Tracking Solution Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core numerical computing
+numpy>=1.21.0
+
+# Scientific computing (EKF, SLERP, etc.)
+scipy>=1.7.0
+
+# ZeroMQ for Unity bridge
+pyzmq>=22.0.0
+

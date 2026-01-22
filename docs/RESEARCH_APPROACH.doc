@@ -1,0 +1,193 @@
+RACKET POSE ESTIMATION SYSTEM
+Technical Research & Approach Document
+
+
+TECHNICAL FOUNDATION
+
+Kinematic Chain Extension
+
+We model the racket as an extension of the human arm's kinematic chain:
+
+    Spine → Shoulder → Elbow → Wrist → Grip → Racket Head
+
+The body tracking system provides joint positions and angles for the spine through wrist segments. Our contribution is reconstructing the final two links (grip and racket) from this available data.
+
+
+Degrees of Freedom Analysis
+
+A rigid body in 3D requires 6 degrees of freedom (DoF) — 3 translational (position) and 3 rotational (orientation).
+
+Available from tracking:
+    - Wrist position (x, y, z) — provides 3 translational DoF
+
+Reconstructed through our approach:
+    - Pronation/Supination — forearm rotation about its longitudinal axis
+    - Wrist Flexion/Extension — bending toward palm or back of hand
+    - Radial/Ulnar Deviation — side-to-side wrist tilt
+
+
+APPROACH FOR DOF RECOVERY
+
+Forearm Coordinate Frame Construction
+
+We construct a local coordinate frame at the wrist using the tracked joint positions:
+
+    1. Primary Axis (Z): Direction from elbow to wrist — defines the forearm's longitudinal axis
+    2. Reference Plane: Formed by shoulder, elbow, and wrist positions
+    3. Secondary Axis (X): Perpendicular to both the forearm axis and the arm plane normal
+    4. Tertiary Axis (Y): Completes the right-handed coordinate system
+
+This gives us the forearm's orientation in world space without requiring hand tracking.
+
+
+Pronation Estimation via Biomechanical Coupling
+
+Research on tennis biomechanics (Fleisig et al., Elliott et al.) documents that forearm pronation during overhead strokes is coupled to elbow angle and motion phase:
+
+    Trophy Position     →   0° (Neutral)
+    Back-scratch        →   -50° (Supinated)
+    Acceleration        →   -50° to +40° (Rapid pronation)
+    Impact              →   +40° (Pronated)
+    Follow-through      →   +70° (Full pronation)
+
+We detect the current phase using wrist height relative to shoulder, motion velocity magnitude, and elbow angle rate of change. The pronation angle is then interpolated based on phase and elbow extension progress during acceleration.
+
+
+Flexion and Deviation
+
+Wrist Flexion is derived from the wrist angle provided by Apple Vision. We map the tracked angle to anatomical flexion using the relationship: flexion = 180° - tracked_angle.
+
+Radial/Ulnar Deviation is estimated from phase-based priors with adjustment for grip style (continental, eastern, western).
+
+
+Final Orientation Computation
+
+The racket orientation quaternion is computed by chaining rotation matrices:
+
+    R_racket = R_forearm × R_pronation × R_flexion × R_deviation × R_grip_offset
+
+This produces a full 6-DoF pose: wrist position plus derived orientation.
+
+
+APPROACH FOR OCCLUSION HANDLING
+
+Occlusion Characteristics
+
+Analysis of serve footage confirms that during the back-scratch phase:
+    - Duration: 300-500 milliseconds
+    - Affected joints: Shoulder, elbow, and wrist angles return invalid data
+    - Cause: Arm position behind the head/torso blocks camera view
+
+
+Boundary Value Formulation
+
+We formulate the occlusion period as a two-point boundary value problem rather than a forward prediction:
+
+    Given:
+        - Pose P₀ at the last tracked frame before occlusion
+        - Pose P₁ at the first tracked frame after occlusion
+
+    Solve for:
+        - Trajectory P(t) connecting P₀ to P₁
+
+This eliminates drift because the solution is anchored at both endpoints.
+
+
+Minimum Jerk Trajectory
+
+Human motion follows the minimum jerk principle (Flash & Hogan, 1985). We solve for the trajectory that minimizes the integral of jerk squared. For position, this yields a fifth-order polynomial. For rotation, we use SQUAD (Spherical Quadrangle) interpolation to ensure smooth quaternion transitions.
+
+
+Constraint Enforcement
+
+The trajectory optimization enforces:
+    - Joint angle limits based on anatomical range of motion
+    - Angular velocity limits at maximum 2500°/s for pronation (based on measured peak values)
+    - C² continuous position and C¹ continuous rotation
+
+
+Real-Time Operation
+
+For live tracking where the post-occlusion pose is not yet available:
+    1. Predict forward using Extended Kalman Filter with biomechanical priors
+    2. When tracking resumes, blend from predicted pose to observed pose over 150ms
+    3. Blending uses SLERP for rotation and linear interpolation for position
+
+
+
+APPROACH FOR IMPACT PHYSICS
+
+Racket Face Normal Extraction
+
+The face normal vector is extracted from the orientation quaternion by taking the third column of the rotation matrix. This gives the direction perpendicular to the string bed in world coordinates.
+
+
+Impact Model
+
+We apply oblique impact mechanics with the following parameters:
+    - Coefficient of restitution: 0.75 (ITF specification for tennis balls)
+    - String-ball friction coefficient: 0.4
+
+The incoming ball velocity is decomposed into normal and tangential components. The normal component is reversed and scaled by the coefficient of restitution. The tangential component is modified by friction and generates spin.
+
+
+Output Data
+
+The impact calculation provides:
+    - Ball exit velocity (magnitude and direction)
+    - Spin rate (RPM)
+    - Spin axis orientation
+    - Spin classification (topspin, backspin, sidespin, kick)
+
+
+
+APPROACH FOR UNITY INTEGRATION
+
+Data Pipeline Architecture
+
+    Body Tracking (iOS) → Kinematic Processing (Python) → Data Stream (ZeroMQ) → Unity Receiver (C#) → Avatar Rig
+
+
+Data Packet Structure
+
+Each frame transmits timestamp, frame ID, position, orientation quaternion, linear velocity, angular velocity, tracking confidence, motion phase identifier, and impact detection data. Total packet size is 72 bytes per frame at 30 Hz.
+
+
+Unity Components
+
+TrackingBridge receives and parses incoming data packets and handles coordinate system conversion from right-handed to Unity's left-handed system.
+
+GripConstraint applies the received pose to the racket transform after animation and manages kinematic/physics mode switching based on tracking confidence.
+
+
+Physics Integration
+
+When tracking confidence is high, the racket runs in kinematic mode where tracking controls it directly. When confidence drops, the system switches to physics mode as a fallback. Transitions are smoothed to prevent visual discontinuity.
+
+
+PROTOTYPE DEVELOPMENT PATH
+
+Phase 1: Core Kinematic Chain
+    - Implement forearm coordinate frame construction
+    - Implement phase detection from body tracking data
+    - Implement pronation estimation from biomechanical coupling
+
+Phase 2: Full 6-DoF Output
+    - Combine all rotational components into final quaternion
+    - Validate racket orientation against manually annotated frames
+
+Phase 3: Occlusion System
+    - Implement Extended Kalman Filter for real-time prediction
+    - Implement boundary value solver for trajectory optimization
+    - Implement blending for smooth recovery
+
+Phase 4: Integration
+    - Implement Unity bridge and receiver components
+    - Connect to existing avatar rig
+    - Add impact physics calculation
+
+
+SUMMARY
+Our approach reconstructs racket pose by extending the kinematic chain from tracked body joints using biomechanical constraints and phase-aware estimation. Occlusion is handled through constrained trajectory optimization rather than unbounded prediction. Impact physics are computed directly from the reconstructed orientation.
+
+This approach requires no additional hardware and operates within the existing body tracking framework.

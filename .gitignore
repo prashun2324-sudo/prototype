@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# Video files (too large for git)
+*.mp4
+*.mov
+*.avi
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Output files
+*_tracked.mp4
+*_6dof.mp4
+*_split.mp4
+comparison_output.mp4
+tracking_output.csv
+
+# Logs
+*.log
+

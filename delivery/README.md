@@ -1,155 +1,155 @@
-# Occlusion Handling Module
+# 6-DoF Racket Lock Implementation
 
-## What This Is
+Mathematical solution to keep the racket rigidly locked to the player's hand throughout the stroke.
 
-Processes pose data frame-by-frame and outputs smooth racket position even during occlusion (when tracking is lost).
+## The Problem
+During fast strokes (backhand, serve), the racket can appear to "slip" from the hand due to:
+- Tracking jitter
+- Brief occlusions
+- Inconsistent keypoint detection
 
----
+## The Solution: 6-DoF Lock
+
+The racket is **mathematically locked** to the wrist with 6 degrees of freedom:
+
+**Position (3 DoF):**
+```
+racket_position = wrist_position + (forearm_direction × FIXED_OFFSET)
+```
+
+**Orientation (3 DoF):**
+```
+racket_quaternion = quaternion_from_forearm_direction(wrist - elbow)
+```
+
+Since `FIXED_OFFSET` is constant (0.55m default), the racket **cannot slip**.
 
 ## Files
 
+| File | Purpose |
+|------|---------|
+| `racket_6dof_lock.py` | Core implementation |
+| `test_6dof_lock.py` | Mathematical verification tests |
+| `motion_occlusion_solver.py` | Generic occlusion handling (optional) |
+| `test_solver.py` | Occlusion solver tests |
+
+## Quick Start
+
+### Python Usage
+```python
+from racket_6dof_lock import Racket6DoFLock
+
+lock = Racket6DoFLock()
+
+# Each frame:
+pose = lock.compute(
+    wrist=[0.5, 1.0, 0.3],    # Wrist position from pose detection
+    elbow=[0.4, 1.2, 0.3],    # Elbow position
+    timestamp=0.033            # Frame time
+)
+
+# Output:
+print(pose.position)      # Racket face center [x, y, z]
+print(pose.quaternion)    # Orientation [w, x, y, z]
+print(pose.direction)     # Face normal vector
 ```
-motion_occlusion_solver.py   <- Main solver
-test_solver.py               <- Validation tests
-README.md                    <- This file
-```
 
----
-
-## Batch Processing (JSON to JSON)
-
-**Command line:**
+### JSON Batch Processing
 ```bash
-python motion_occlusion_solver.py input.json output.json 0.55
+python racket_6dof_lock.py input.json output.json
 ```
 
 **Input JSON format:**
 ```json
 {
-    "frames": [
-        {
-            "timestamp": 0.0,
-            "keypoints": [
-                {"name": "right_wrist", "x": 0.5, "y": 1.0, "z": 0.3, "score": 0.95},
-                {"name": "right_elbow", "x": 0.4, "y": 1.2, "z": 0.3, "score": 0.95}
-            ]
-        },
-        {
-            "timestamp": 0.033,
-            "keypoints": [...]
-        }
-    ]
+  "frames": [
+    {
+      "timestamp": 0.0,
+      "keypoints": [
+        {"name": "right_wrist", "x": 0.5, "y": 1.0, "z": 0.3},
+        {"name": "right_elbow", "x": 0.4, "y": 1.2, "z": 0.3}
+      ]
+    }
+  ]
 }
 ```
 
 **Output JSON format:**
 ```json
 {
-    "source_file": "input.json",
-    "object_length": 0.55,
-    "total_frames": 100,
-    "frames": [
-        {
-            "frame_index": 0,
-            "timestamp": 0.0,
-            "input_confidence": 0.95,
-            "position": [0.75, 0.51, 0.30],
-            "quaternion": [0.99, 0.01, 0.02, 0.03],
-            "direction": [0.45, -0.89, 0.0],
-            "velocity": [0.01, -0.02, 0.01],
-            "output_confidence": 0.95,
-            "is_predicted": false,
-            "state": "tracking"
-        }
-    ]
+  "frames": [
+    {
+      "frame_index": 0,
+      "timestamp": 0.0,
+      "racket_position": [1.05, 0.508, 0.3],
+      "racket_quaternion": [0.707, 0.0, 0.707, 0.0],
+      "racket_direction": [0.894, -0.447, 0.0],
+      "wrist_position": [0.5, 1.0, 0.3]
+    }
+  ]
 }
 ```
-
----
-
-## Python API
-
-```python
-from motion_occlusion_solver import OcclusionSolver, process_json_file
-
-# Option 1: Batch process JSON file
-process_json_file(
-    input_path='pose_data.json',
-    output_path='output.json',
-    object_length=0.55
-)
-
-# Option 2: Frame-by-frame processing
-solver = OcclusionSolver(object_length=0.55)
-
-for frame in frames:
-    result = solver.process(
-        anchor=frame['wrist'],           # [x, y, z]
-        reference=frame['elbow'],        # [x, y, z]
-        confidence=frame['score'],       # 0.0 - 1.0
-        timestamp=frame['timestamp']     # seconds (important for prediction!)
-    )
-    
-    # Use result
-    position = result.position
-    quaternion = result.quaternion
-    is_predicted = result.is_predicted
-```
-
----
-
-## Timestamp Parameter
-
-**Yes, timestamp is supported and important.**
-
-```python
-result = solver.process(
-    anchor=[x, y, z],
-    reference=[x, y, z],
-    confidence=0.95,
-    timestamp=0.033  # <-- Time in seconds
-)
-```
-
-- If not provided, assumes 30fps and auto-increments
-- For accurate prediction during occlusion, provide actual timestamps
-- Prediction uses time elapsed to calculate trajectory
-
----
-
-## Output Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `position` | `[x,y,z]` | Predicted object position |
-| `quaternion` | `[w,x,y,z]` | Rotation (None for 2D) |
-| `direction` | `[x,y,z]` | Direction unit vector |
-| `velocity` | `[x,y,z]` | Velocity estimate |
-| `output_confidence` | `float` | How reliable (0-1) |
-| `is_predicted` | `bool` | True = prediction, False = observed |
-| `state` | `string` | "tracking", "predicted", "blending", etc |
-
----
-
-## Validation
-
-Run tests before using:
-```bash
-python test_solver.py
-```
-
-All 10 tests should pass.
-
----
 
 ## Configuration
 
 ```python
-solver = OcclusionSolver(
-    object_length=0.55,           # wrist to object center (meters)
-    high_conf=0.7,                # above = good tracking
-    low_conf=0.3,                 # below = switch to prediction
-    smoothing=0.7,                # position filter
-    expected_occlusion_time=0.3   # typical gap duration (seconds)
+from racket_6dof_lock import Racket6DoFLock, GripConfig
+
+config = GripConfig(
+    wrist_to_grip=np.array([0.1, 0.0, 0.03]),  # Kalpesh's offset
+    wrist_to_face=0.55                          # Wrist to racket face distance
+)
+
+lock = Racket6DoFLock(
+    grip_config=config,
+    smoothing=0.7  # 0-1, higher = more responsive
 )
 ```
+
+## Run Tests
+
+```bash
+cd delivery
+python test_6dof_lock.py
+```
+
+Expected output:
+```
+ALL TESTS PASSED
+The racket is mathematically guaranteed to stay locked to the hand.
+```
+
+## Integration Notes
+
+### For Unity (C++ Port)
+The math is straightforward to port:
+
+```cpp
+// Compute forearm direction
+vec3 forearm = wrist - elbow;
+vec3 direction = normalize(forearm);
+
+// Position: wrist + offset along forearm
+vec3 racket_pos = wrist + direction * WRIST_TO_FACE;
+
+// Orientation: quaternion from direction
+quat racket_rot = quaternion_look_rotation(direction, vec3(0,1,0));
+```
+
+### Coordinate System
+- Input: Right-handed (Apple Vision)
+- For Unity (left-handed): flip X axis
+  ```python
+  position[0] *= -1
+  quaternion[1] *= -1  # x component
+  ```
+
+## Mathematical Guarantee
+
+The 6-DoF lock guarantees:
+1. **No slip**: Racket stays at fixed distance from wrist
+2. **Smooth motion**: Minimum jerk filtering reduces tracking jitter
+3. **Valid rotations**: All quaternions are unit length
+4. **Continuous**: Even during brief tracking gaps
+
+This was verified with the test suite in `test_6dof_lock.py`.

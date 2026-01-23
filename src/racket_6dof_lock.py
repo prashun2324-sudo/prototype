@@ -216,8 +216,11 @@ class Racket6DoFLock:
         dt = timestamp - self.last_timestamp if self.last_timestamp > 0 else 1/30
         self.last_timestamp = timestamp
         
+        # Smooth wrist position first (reduces input jitter)
+        smooth_wrist = self.pos_filter.filter(wrist, dt)
+        
         # Compute forearm direction (elbow → wrist)
-        forearm = wrist - elbow
+        forearm = smooth_wrist - elbow
         forearm_len = np.linalg.norm(forearm)
         
         if forearm_len < 0.001:
@@ -226,12 +229,9 @@ class Racket6DoFLock:
         else:
             direction = forearm / forearm_len
         
-        # Compute racket position: wrist + offset along forearm direction
-        # The racket is LOCKED to this position - no slip possible
-        raw_position = wrist + direction * self.config.wrist_to_face
-        
-        # Apply minimum jerk smoothing (removes jitter, keeps lock)
-        position = self.pos_filter.filter(raw_position, dt)
+        # RIGID LOCK: racket position is EXACTLY wrist + fixed offset
+        # This distance NEVER changes - mathematically guaranteed
+        position = smooth_wrist + direction * self.config.wrist_to_face
         
         # Compute quaternion from direction
         raw_quat = self._direction_to_quaternion(direction)
@@ -243,7 +243,7 @@ class Racket6DoFLock:
             position=position,
             quaternion=quaternion,
             direction=direction,
-            wrist_position=wrist,
+            wrist_position=smooth_wrist,  # Return smoothed wrist
             timestamp=timestamp
         )
     

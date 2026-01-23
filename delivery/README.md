@@ -2,81 +2,143 @@
 
 ## What This Is
 
-A standalone module that handles tracking gaps when the racket/hand goes out of view (behind body, back-scratch position, etc). 
-
-Feed it your Apple Vision tracking data, it outputs smooth racket position even during occlusion.
+Processes pose data frame-by-frame and outputs smooth racket position even during occlusion (when tracking is lost).
 
 ---
 
-## Files Included
+## Files
 
 ```
-delivery/
-├── motion_occlusion_solver.py   <- Main solver (integrate this)
-├── test_solver.py               <- Run this to validate
-└── README.md                    <- You're reading this
+motion_occlusion_solver.py   <- Main solver
+test_solver.py               <- Validation tests
+README.md                    <- This file
 ```
 
 ---
 
-## Quick Start
+## Batch Processing (JSON to JSON)
 
-### Step 1: Validate
+**Command line:**
 ```bash
-python test_solver.py
+python motion_occlusion_solver.py input.json output.json 0.55
 ```
-All 10 tests should pass. If any fail, don't integrate.
 
-### Step 2: Integrate
+**Input JSON format:**
+```json
+{
+    "frames": [
+        {
+            "timestamp": 0.0,
+            "keypoints": [
+                {"name": "right_wrist", "x": 0.5, "y": 1.0, "z": 0.3, "score": 0.95},
+                {"name": "right_elbow", "x": 0.4, "y": 1.2, "z": 0.3, "score": 0.95}
+            ]
+        },
+        {
+            "timestamp": 0.033,
+            "keypoints": [...]
+        }
+    ]
+}
+```
+
+**Output JSON format:**
+```json
+{
+    "source_file": "input.json",
+    "object_length": 0.55,
+    "total_frames": 100,
+    "frames": [
+        {
+            "frame_index": 0,
+            "timestamp": 0.0,
+            "input_confidence": 0.95,
+            "position": [0.75, 0.51, 0.30],
+            "quaternion": [0.99, 0.01, 0.02, 0.03],
+            "direction": [0.45, -0.89, 0.0],
+            "velocity": [0.01, -0.02, 0.01],
+            "output_confidence": 0.95,
+            "is_predicted": false,
+            "state": "tracking"
+        }
+    ]
+}
+```
+
+---
+
+## Python API
+
 ```python
-from motion_occlusion_solver import OcclusionSolver
+from motion_occlusion_solver import OcclusionSolver, process_json_file
 
-solver = OcclusionSolver(object_length=0.55)
-
-# Each frame:
-result = solver.process(
-    anchor=wrist_xyz,        # from Apple Vision
-    reference=elbow_xyz,     # from Apple Vision
-    confidence=conf_score    # from Apple Vision
+# Option 1: Batch process JSON file
+process_json_file(
+    input_path='pose_data.json',
+    output_path='output.json',
+    object_length=0.55
 )
 
-# Output for Unity:
-position = result.position       # [x, y, z]
-quaternion = result.quaternion   # [w, x, y, z]
-is_predicted = result.is_predicted
+# Option 2: Frame-by-frame processing
+solver = OcclusionSolver(object_length=0.55)
+
+for frame in frames:
+    result = solver.process(
+        anchor=frame['wrist'],           # [x, y, z]
+        reference=frame['elbow'],        # [x, y, z]
+        confidence=frame['score'],       # 0.0 - 1.0
+        timestamp=frame['timestamp']     # seconds (important for prediction!)
+    )
+    
+    # Use result
+    position = result.position
+    quaternion = result.quaternion
+    is_predicted = result.is_predicted
 ```
 
 ---
 
-## How It Works
+## Timestamp Parameter
 
-1. **Tracks confidence** - when Apple Vision confidence drops, we know tracking is unreliable
+**Yes, timestamp is supported and important.**
 
-2. **Predicts during occlusion** - uses minimum jerk trajectory (biomechanically accurate human motion model)
+```python
+result = solver.process(
+    anchor=[x, y, z],
+    reference=[x, y, z],
+    confidence=0.95,
+    timestamp=0.033  # <-- Time in seconds
+)
+```
 
-3. **Blends on recovery** - when tracking returns, smoothly transitions back (no jumping)
+- If not provided, assumes 30fps and auto-increments
+- For accurate prediction during occlusion, provide actual timestamps
+- Prediction uses time elapsed to calculate trajectory
 
 ---
 
-## Inputs Required
-
-| Input | Type | Source |
-|-------|------|--------|
-| `anchor` | `[x,y,z]` | Wrist position from Apple Vision |
-| `reference` | `[x,y,z]` | Elbow position from Apple Vision |
-| `confidence` | `0.0-1.0` | Tracking confidence from Apple Vision |
-
----
-
-## Output
+## Output Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `position` | `[x,y,z]` | Racket face center position |
-| `quaternion` | `[w,x,y,z]` | Racket rotation for Unity |
-| `is_predicted` | `bool` | True = predicted, False = observed |
-| `confidence` | `float` | Reliability score |
-| `state` | `string` | "tracking", "predicted", "blending" |
+| `position` | `[x,y,z]` | Predicted object position |
+| `quaternion` | `[w,x,y,z]` | Rotation (None for 2D) |
+| `direction` | `[x,y,z]` | Direction unit vector |
+| `velocity` | `[x,y,z]` | Velocity estimate |
+| `output_confidence` | `float` | How reliable (0-1) |
+| `is_predicted` | `bool` | True = prediction, False = observed |
+| `state` | `string` | "tracking", "predicted", "blending", etc |
+
+---
+
+## Validation
+
+Run tests before using:
+```bash
+python test_solver.py
+```
+
+All 10 tests should pass.
 
 ---
 
@@ -84,54 +146,10 @@ is_predicted = result.is_predicted
 
 ```python
 solver = OcclusionSolver(
-    object_length=0.55,           # wrist to racket face (meters)
-    high_conf=0.7,                # good tracking threshold
-    low_conf=0.3,                 # occlusion threshold
+    object_length=0.55,           # wrist to object center (meters)
+    high_conf=0.7,                # above = good tracking
+    low_conf=0.3,                 # below = switch to prediction
+    smoothing=0.7,                # position filter
     expected_occlusion_time=0.3   # typical gap duration (seconds)
 )
 ```
-
-Adjust `object_length` based on your racket model.
-
----
-
-## Coordinate System
-
-The solver outputs in the same coordinate system as your input. 
-
-If you need Apple Vision (right-handed) to Unity (left-handed):
-- Negate X position
-- Negate X component of quaternion
-
----
-
-## Hybrid Integration
-
-This module handles the **occlusion prediction** part. Your existing Apple Vision tracking handles the **observation** part.
-
-```
-Apple Vision Data
-       │
-       ▼
-┌─────────────────┐
-│ Occlusion       │
-│ Solver          │──▶ Smooth output even during gaps
-└─────────────────┘
-       │
-       ▼
-   Unity Rig
-```
-
-When confidence is high → uses Apple Vision data directly
-When confidence drops → switches to prediction
-When confidence returns → blends back smoothly
-
----
-
-## Questions
-
-If tests pass but integration doesn't work:
-1. Check coordinate system alignment
-2. Verify confidence score range (should be 0-1)
-3. Check wrist/elbow positions are in meters (not pixels)
-

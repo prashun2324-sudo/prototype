@@ -500,29 +500,172 @@ class OcclusionSolver:
         self.frame_num = 0
 
 
+def process_json_file(input_path, output_path, object_length=0.55, 
+                       wrist_key='right_wrist', elbow_key='right_elbow'):
+    """
+    Process a JSON file containing pose data and output results.
+    
+    Args:
+        input_path: Path to input JSON with frame data
+        output_path: Path to write output JSON
+        object_length: Distance from wrist to object center (meters)
+        wrist_key: Key name for wrist position in data
+        elbow_key: Key name for elbow position in data
+    
+    Input JSON format:
+        {
+            "frames": [
+                {
+                    "timestamp": 0.0,
+                    "keypoints": [
+                        {"name": "right_wrist", "x": 0.5, "y": 1.0, "z": 0.3, "score": 0.95},
+                        {"name": "right_elbow", "x": 0.4, "y": 1.2, "z": 0.3, "score": 0.95},
+                        ...
+                    ]
+                },
+                ...
+            ]
+        }
+    
+    Output JSON format:
+        {
+            "frames": [
+                {
+                    "frame_index": 0,
+                    "timestamp": 0.0,
+                    "input_confidence": 0.95,
+                    "position": [x, y, z],
+                    "quaternion": [w, x, y, z],
+                    "direction": [dx, dy, dz],
+                    "velocity": [vx, vy, vz],
+                    "output_confidence": 0.95,
+                    "is_predicted": false,
+                    "state": "tracking"
+                },
+                ...
+            ]
+        }
+    """
+    import json
+    
+    # Load input
+    with open(input_path, 'r') as f:
+        data = json.load(f)
+    
+    frames = data.get('frames', [])
+    solver = OcclusionSolver(object_length=object_length)
+    
+    output_frames = []
+    
+    for i, frame in enumerate(frames):
+        # Extract timestamp
+        timestamp = frame.get('timestamp', i / 30.0)
+        
+        # Extract keypoints
+        keypoints = frame.get('keypoints', [])
+        
+        wrist = None
+        elbow = None
+        confidence = 0.0
+        
+        for kp in keypoints:
+            name = kp.get('name', '')
+            if wrist_key in name or name == wrist_key:
+                if 'z' in kp:
+                    wrist = [kp['x'], kp['y'], kp['z']]
+                else:
+                    wrist = [kp['x'], kp['y']]
+                confidence = kp.get('score', kp.get('confidence', 0.5))
+            elif elbow_key in name or name == elbow_key:
+                if 'z' in kp:
+                    elbow = [kp['x'], kp['y'], kp['z']]
+                else:
+                    elbow = [kp['x'], kp['y']]
+        
+        # Skip if missing data
+        if wrist is None or elbow is None:
+            output_frames.append({
+                'frame_index': i,
+                'timestamp': timestamp,
+                'error': 'missing wrist or elbow data'
+            })
+            continue
+        
+        # Process through solver
+        result = solver.process(
+            anchor=wrist,
+            reference=elbow,
+            confidence=confidence,
+            timestamp=timestamp
+        )
+        
+        # Build output
+        output_frames.append({
+            'frame_index': i,
+            'timestamp': timestamp,
+            'input_confidence': confidence,
+            'position': result.position.tolist(),
+            'quaternion': result.quaternion.tolist() if result.quaternion is not None else None,
+            'direction': result.direction.tolist(),
+            'velocity': result.velocity.tolist(),
+            'output_confidence': result.confidence,
+            'is_predicted': result.is_predicted,
+            'state': result.state
+        })
+    
+    # Write output
+    output_data = {
+        'source_file': input_path,
+        'object_length': object_length,
+        'total_frames': len(output_frames),
+        'frames': output_frames
+    }
+    
+    with open(output_path, 'w') as f:
+        json.dump(output_data, f, indent=2)
+    
+    print(f"Processed {len(output_frames)} frames")
+    print(f"Output written to: {output_path}")
+    
+    return output_data
+
+
 # quick test
 if __name__ == '__main__':
-    print("Testing occlusion solver...")
-    print("-" * 40)
+    import sys
     
-    solver = OcclusionSolver(object_length=0.55)
+    # If arguments provided, process JSON file
+    if len(sys.argv) >= 3:
+        input_file = sys.argv[1]
+        output_file = sys.argv[2]
+        obj_len = float(sys.argv[3]) if len(sys.argv) > 3 else 0.55
+        
+        print(f"Processing: {input_file}")
+        process_json_file(input_file, output_file, object_length=obj_len)
     
-    # some test data
-    test_frames = [
-        {'w': [0.5, 1.0, 0.3], 'e': [0.4, 1.2, 0.3], 'c': 0.95},
-        {'w': [0.55, 0.95, 0.35], 'e': [0.45, 1.15, 0.35], 'c': 0.90},
-        {'w': [0.6, 0.9, 0.4], 'e': [0.5, 1.1, 0.4], 'c': 0.50},
-        {'w': [0, 0, 0], 'e': [0, 0, 0], 'c': 0.05},  # lost tracking
-        {'w': [0, 0, 0], 'e': [0, 0, 0], 'c': 0.05},
-        {'w': [0.7, 0.8, 0.5], 'e': [0.6, 1.0, 0.5], 'c': 0.85},  # recovered
-        {'w': [0.75, 0.75, 0.55], 'e': [0.65, 0.95, 0.55], 'c': 0.95},
-    ]
-    
-    for i, f in enumerate(test_frames):
-        r = solver.process(f['w'], f['e'], f['c'])
-        p = r.position
-        print(f"frame {i}: conf={f['c']:.2f}, state={r.state:15s}, "
-              f"pos=[{p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f}], predicted={r.is_predicted}")
-    
-    print("-" * 40)
-    print("done")
+    else:
+        # Run basic test
+        print("Testing occlusion solver...")
+        print("-" * 40)
+        
+        solver = OcclusionSolver(object_length=0.55)
+        
+        # Test with timestamps
+        test_frames = [
+            {'w': [0.5, 1.0, 0.3], 'e': [0.4, 1.2, 0.3], 'c': 0.95, 't': 0.000},
+            {'w': [0.55, 0.95, 0.35], 'e': [0.45, 1.15, 0.35], 'c': 0.90, 't': 0.033},
+            {'w': [0.6, 0.9, 0.4], 'e': [0.5, 1.1, 0.4], 'c': 0.50, 't': 0.066},
+            {'w': [0, 0, 0], 'e': [0, 0, 0], 'c': 0.05, 't': 0.100},
+            {'w': [0, 0, 0], 'e': [0, 0, 0], 'c': 0.05, 't': 0.133},
+            {'w': [0.7, 0.8, 0.5], 'e': [0.6, 1.0, 0.5], 'c': 0.85, 't': 0.166},
+            {'w': [0.75, 0.75, 0.55], 'e': [0.65, 0.95, 0.55], 'c': 0.95, 't': 0.200},
+        ]
+        
+        for i, f in enumerate(test_frames):
+            r = solver.process(f['w'], f['e'], f['c'], timestamp=f['t'])
+            p = r.position
+            print(f"frame {i}: t={f['t']:.3f}s, conf={f['c']:.2f}, state={r.state:15s}, "
+                  f"pos=[{p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f}], predicted={r.is_predicted}")
+        
+        print("-" * 40)
+        print("Usage: python motion_occlusion_solver.py <input.json> <output.json> [object_length]")
